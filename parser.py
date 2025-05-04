@@ -9,7 +9,7 @@ ISO_CODE = input("Inserisci il codice ISO-3 del paese (es. 'usa', 'jpn'): ").low
 INPUT_DIR = 'input'
 TEMPLATE_PATH = 'templates/template.html'
 OUTPUT_DIR = f'docs/{ISO_CODE}'
-GLOBAL_INDEX_PATH = 'docs/index.html'
+GLOBAL_INDEX_PATH = 'docs/index-global.html'
 
 # === FUNZIONE PER ESTRARRE SEZIONI PER TITOLO H2 ===
 def estrai_blocco_per_titolo(soup, titolo):
