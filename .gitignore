@@ -1,0 +1,28 @@
+# 🧠 Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 🛠️ Ambienti virtuali
+.venv/
+env/
+venv/
+
+# 📂 File di sistema (macOS)
+.DS_Store
+
+# 🗂️ Input e output temporanei
+input/
+output/
+
+# 🗝️ File config sensibili
+config.json
+
+# 🧪 Backup o log temporanei
+*.log
+*.bak
+*.tmp
+
+# 🔍 File generati per test locali
+*.html
+!docs/**/*.html  # MA: include solo HTML dentro docs/

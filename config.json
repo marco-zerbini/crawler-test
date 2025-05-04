@@ -1,9 +1,0 @@
-{
-    "title": "h1",
-    "summary": "div.long-description > div:nth-of-type(1)",
-    "mood": "h2:contains('Mood di viaggio') + div",
-    "effort": "h2:contains('Impegno fisico') + div",
-    "requirements": "h2:contains('Cosa serve') + div",
-    "meeting": "h2:contains('Ritrovo e saluti') + div"
-  }
-  
