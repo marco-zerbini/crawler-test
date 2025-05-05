@@ -23,7 +23,5 @@ config.json
 *.bak
 *.tmp
 
-# 🔍 File generati per test locali
-*.html
-!docs/**/*.html  # MA: include solo HTML dentro docs/
-!docs/index.html
+# Includi tutti gli HTML dentro la cartella docs e sottocartelle
+!docs/**.html
