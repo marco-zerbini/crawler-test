@@ -1,12 +1,11 @@
-# weroad_trip_generator.py
 import asyncio
 import os
 import re
-import subprocess
 from pathlib import Path
 from bs4 import BeautifulSoup
 from jinja2 import Template
 from playwright.async_api import async_playwright
+import subprocess
 
 # === CONFIG ===
 ISO_CODE = input("Inserisci il codice ISO-3 del paese (es. 'usa', 'jpn'): ").lower()
@@ -16,48 +15,67 @@ OUTPUT_DIR = f'docs/{ISO_CODE}'
 GLOBAL_INDEX_PATH = 'docs/index.html'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs("input", exist_ok=True)
 
 # === UTIL ===
-def slugify(url):
-    name = url.strip().split("/")[-1]
-    slug = re.sub(r"[^\w\s-]", "", name.lower())
+def slugify(text):
+    slug = re.sub(r"[^\w\s-]", "", text.lower())
     slug = re.sub(r"\s+", "-", slug).strip("-")
     return slug
 
-# === FUNZIONE PER ESTRARRE HTML DA URL ===
-async def estrai_html_con_playwright(url, output_file):
+# === PLAYWRIGHT: ESTRAI HTML, MODALE, ITINERARIO ===
+async def estrai_html_modale_e_itinerario(url):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=200)
         page = await browser.new_page()
+
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.evaluate("document.documentElement.style.zoom = '0.7'")
         except Exception as e:
             print(f"❌ Errore caricamento {url}: {e}")
-            return
+            return None, None, None
 
         try:
-            await page.evaluate("""
-                () => {
-                    const el = document.getElementById('iubenda-cs-banner');
-                    if (el) el.remove();
-                }
-            """)
+            await page.locator("button", has_text="Accetta tutti").click(timeout=5000)
+            await page.wait_for_timeout(1000)
         except:
             pass
 
-        try:
-            accordion_icons = await page.locator('[data-testid="accordion-icon"]').all()
-            for icon in accordion_icons:
-                try:
-                    await icon.click()
-                    await page.wait_for_timeout(200)
-                except:
-                    pass
-        except:
-            pass
+        await page.evaluate("""() => {
+            document.querySelectorAll('[data-name="accordion-toggler"]').forEach(el => el.click());
+        }""")
+        for y in range(0, 5000, 300):
+            await page.evaluate(f"window.scrollTo(0, {y})")
+            await page.wait_for_timeout(200)
 
+        await page.wait_for_timeout(1000)
+
+        titoli = await page.eval_on_selector_all(
+            "div[data-name='accordion-header'] h4",
+            "els => els.map(el => el.innerText.trim())"
+        )
+
+        raw_blocchi = await page.query_selector_all("div[data-name='substage']")
+        descrizioni_per_giorno = []
+        for blocco in raw_blocchi:
+            paragrafi = await blocco.query_selector_all("div.description.content p")
+            testi = []
+            for p in paragrafi:
+                txt = (await p.inner_text()).strip()
+                if txt:
+                    testi.append(txt)
+            descrizioni_per_giorno.append(testi)
+
+        blocchi = []
+        for i, titolo in enumerate(titoli):
+            paragrafi = descrizioni_per_giorno[i] if i < len(descrizioni_per_giorno) else []
+            blocco_html = f"<section class='giorno'>\n<h3>Giorno {i+1}: {titolo}</h3>\n"
+            for p in paragrafi:
+                blocco_html += f"<p>{p}</p>\n"
+            blocco_html += "</section>\n"
+            blocchi.append(blocco_html)
+
+        # Click su "Cassa comune"
         try:
             await page.evaluate("""
                 () => {
@@ -70,69 +88,40 @@ async def estrai_html_con_playwright(url, output_file):
         except:
             print("⚠️ Impossibile cliccare su 'Cassa comune'")
 
+        modal_text = await page.evaluate("""
+            () => {
+                const modal = document.querySelector('.wr-modal-external-container');
+                return modal ? modal.innerText : null;
+            }
+        """)
+
+        title = await page.title()
         html = await page.content()
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(html)
         await browser.close()
 
-# === ESTRAZIONE DATI DAL DOM ===
-def estrai_blocco_per_titolo(soup, titolo):
-    blocchi = soup.find_all('h2')
-    for h2 in blocchi:
-        if titolo.lower() in h2.get_text(strip=True).lower():
-            container = h2.find_parent()
-            if container:
-                testo = '\n'.join(p.get_text(strip=True) for p in container.find_all('p'))
-                return testo
-    return 'Contenuto non trovato'
+        return title, "\n".join(blocchi), modal_text, html
 
-def estrai_itinerario(soup):
-    giorni = soup.select("div[data-name='accordion-header']")
-    blocchi = []
-    for giorno in giorni:
-        try:
-            numero = giorno.select_one("span").get_text(strip=True)
-            titolo = giorno.find_next("h4").get_text(strip=True)
-            descrizione = []
-            container = giorno.find_parent().find_next_sibling("div")
-            if container:
-                desc_block = container.select_one("div.description.content")
-                if desc_block:
-                    for p in desc_block.find_all("p"):
-                        testo = p.get_text(strip=True)
-                        if testo:
-                            descrizione.append(f"<p>{testo}</p>")
-                info_block = container.select_one("div.info")
-                if info_block:
-                    for p in info_block.find_all("p"):
-                        descrizione.append(f"<p>{p.decode_contents()}</p>")
-            blocco_html = f"""
-<section class=\"giorno\">
-  <h3>Giorno {numero}: {titolo}</h3>
-  {''.join(descrizione)}
-</section>"""
-            blocchi.append(blocco_html)
-        except:
-            continue
-    return "\n".join(blocchi)
-
-def estrai_modale_formattata(soup):
-    modal = soup.select_one("div.wr-modal-external-container")
-    if not modal:
-        return ("", "", "", "")
-    sezioni = {"Cosa è incluso": "", "La quota viaggio non comprende": "", "La quota della cassa comune comprende": "", "Info aggiuntive": ""}
+# === PARSING MODALE ===
+def parse_modale_txt(modal_text):
+    sezioni = {
+        "Cosa è incluso": "",
+        "La quota viaggio non comprende": "",
+        "La quota della cassa comune comprende": "",
+        "Info aggiuntive": ""
+    }
     current = None
-    for el in modal.find_all(recursive=False):
-        if el.name == "h2" and el.get_text(strip=True) in sezioni:
-            current = el.get_text(strip=True)
-            sezioni[current] += str(el)
-        elif current:
-            sezioni[current] += str(el)
+    for line in modal_text.splitlines():
+        line = line.strip()
+        if line in sezioni:
+            current = line
+            continue
+        if current and line:
+            sezioni[current] += f"<p>{line}</p>\n"
     return (
         sezioni["Cosa è incluso"],
         sezioni["La quota viaggio non comprende"],
         sezioni["La quota della cassa comune comprende"],
-        sezioni["Info aggiuntive"],
+        sezioni["Info aggiuntive"]
     )
 
 # === MAIN ===
@@ -144,39 +133,51 @@ async def main():
         urls = [line.strip() for line in f if line.strip()]
 
     for url in urls:
-        slug = slugify(url)
-        local_html_path = f"input/{slug}.html"
-        await estrai_html_con_playwright(url, local_html_path)
+        title, day_by_day, modal_txt, html = await estrai_html_modale_e_itinerario(url)
+        if not title:
+            continue
 
-        with open(local_html_path, 'r', encoding='utf-8') as f:
-            soup = BeautifulSoup(f, 'html.parser')
+        soup = BeautifulSoup(html, 'html.parser')
+        included, not_included, cassa_comune, extras = parse_modale_txt(modal_txt or "")
 
-        title = soup.title.string.strip() if soup.title else 'viaggio'
-        output_filename = f'{slug}.html'
-        output_path = os.path.join(OUTPUT_DIR, output_filename)
+        summary = soup.find('div', class_='long-description')
+        summary_text = summary.get_text(strip=True) if summary else 'Contenuto non trovato'
 
-        included, not_included, cassa_comune, extras = estrai_modale_formattata(soup)
+        def estrai_blocco_per_titolo(soup, titolo):
+            blocchi = soup.find_all('h2')
+            for h2 in blocchi:
+                if titolo.lower() in h2.get_text(strip=True).lower():
+                    container = h2.find_parent()
+                    if container:
+                        testo = '\n'.join(p.get_text(strip=True) for p in container.find_all('p'))
+                        return testo
+            return 'Contenuto non trovato'
 
         content = {
             'title': title,
             'heading': title,
-            'summary': soup.find('div', class_='long-description').get_text(strip=True) if soup.find('div', class_='long-description') else 'Contenuto non trovato',
+            'summary': summary_text,
             'mood': estrai_blocco_per_titolo(soup, 'Mood di viaggio'),
             'physical_effort': estrai_blocco_per_titolo(soup, 'Impegno fisico'),
             'travel_requirements': estrai_blocco_per_titolo(soup, 'Cosa serve'),
             'meeting_info': estrai_blocco_per_titolo(soup, 'Ritrovo'),
-            'day_by_day': estrai_itinerario(soup),
+            'day_by_day': day_by_day,
             'included': included,
             'not_included': not_included,
             'cassa_comune': cassa_comune,
             'extras': extras,
         }
 
+        slug = slugify(title)
+        output_filename = f'{slug}.html'
+        output_path = os.path.join(OUTPUT_DIR, output_filename)
         rendered_html = template.render(**content)
+
         with open(output_path, 'w', encoding='utf-8') as out:
             out.write(rendered_html)
         print(f"✅ Creato file: {output_path}")
 
+        # Aggiorna index nazionale
         national_index_path = os.path.join(OUTPUT_DIR, 'index.html')
         national_link = f'<li><a href="{output_filename}">{title}</a></li>\n'
         if os.path.exists(national_index_path):
@@ -197,6 +198,7 @@ async def main():
             f.write(index_content)
         print(f"📘 Index {ISO_CODE} aggiornato.")
 
+        # Aggiorna index globale
         global_link = f'<li><a href="{ISO_CODE}/index.html">Viaggi in {ISO_CODE.upper()}</a></li>\n'
         if os.path.exists(GLOBAL_INDEX_PATH):
             with open(GLOBAL_INDEX_PATH, 'r', encoding='utf-8') as f:
@@ -216,13 +218,14 @@ async def main():
             f.write(global_content)
         print("🌍 Index globale aggiornato.")
 
-    try:
-        subprocess.run(["git", "add", "docs/"], check=True)
-        subprocess.run(["git", "commit", "-m", f"Aggiunti/aggiornati viaggi in {ISO_CODE.upper()}`"], check=True)
-        subprocess.run(["git", "push"], check=True)
-        print("🚀 Modifiche pubblicate su GitHub!")
-    except subprocess.CalledProcessError as e:
-        print("⚠️ Errore durante i comandi Git:", e)
+        # Git push opzionale
+        try:
+            subprocess.run(["git", "add", "docs/"], check=True)
+            subprocess.run(["git", "commit", "-m", f"Aggiunto/aggiornato viaggio {title}"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("🚀 Modifiche pubblicate su GitHub!")
+        except subprocess.CalledProcessError as e:
+            print("⚠️ Errore durante il push Git:", e)
 
 if __name__ == "__main__":
     asyncio.run(main())
