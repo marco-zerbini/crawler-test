@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import shutil
 from pathlib import Path
 from bs4 import BeautifulSoup
 from jinja2 import Template
@@ -75,7 +76,6 @@ async def estrai_html_modale_e_itinerario(url):
             blocco_html += "</section>\n"
             blocchi.append(blocco_html)
 
-        # Click su "Cassa comune"
         try:
             await page.evaluate("""
                 () => {
@@ -132,6 +132,8 @@ async def main():
     with open(INPUT_URLS_PATH, 'r', encoding='utf-8') as f:
         urls = [line.strip() for line in f if line.strip()]
 
+    generated_files = []
+
     for url in urls:
         title, day_by_day, modal_txt, html = await estrai_html_modale_e_itinerario(url)
         if not title:
@@ -177,7 +179,8 @@ async def main():
             out.write(rendered_html)
         print(f"✅ Creato file: {output_path}")
 
-        # Aggiorna index nazionale
+        generated_files.append(output_path)
+
         national_index_path = os.path.join(OUTPUT_DIR, 'index.html')
         national_link = f'<li><a href="{output_filename}">{title}</a></li>\n'
         if os.path.exists(national_index_path):
@@ -198,15 +201,14 @@ async def main():
             f.write(index_content)
         print(f"📘 Index {ISO_CODE} aggiornato.")
 
-        # Aggiorna index globale
-        global_link = f'<li><a href="{ISO_CODE}/index.html">Viaggi in {ISO_CODE.upper()}</a></li>\n'
-        if os.path.exists(GLOBAL_INDEX_PATH):
-            with open(GLOBAL_INDEX_PATH, 'r', encoding='utf-8') as f:
-                global_content = f.read()
-            if global_link not in global_content:
-                global_content = global_content.replace('</ul>', global_link + '</ul>')
-        else:
-            global_content = f"""<!DOCTYPE html>
+    global_link = f'<li><a href="{ISO_CODE}/index.html">Viaggi in {ISO_CODE.upper()}</a></li>\n'
+    if os.path.exists(GLOBAL_INDEX_PATH):
+        with open(GLOBAL_INDEX_PATH, 'r', encoding='utf-8') as f:
+            global_content = f.read()
+        if global_link not in global_content:
+            global_content = global_content.replace('</ul>', global_link + '</ul>')
+    else:
+        global_content = f"""<!DOCTYPE html>
 <html lang=\"it\">
 <head><meta charset=\"UTF-8\"><title>Index globale WeRoad</title></head>
 <body>
@@ -214,18 +216,24 @@ async def main():
 <ul>{global_link}</ul>
 </body></html>"""
 
-        with open(GLOBAL_INDEX_PATH, 'w', encoding='utf-8') as f:
-            f.write(global_content)
-        print("🌍 Index globale aggiornato.")
+    with open(GLOBAL_INDEX_PATH, 'w', encoding='utf-8') as f:
+        f.write(global_content)
+    print("🌍 Index globale aggiornato.")
 
-        # Git push opzionale
+    try:
+        subprocess.run(["git", "add", "docs/"], check=True)
+        subprocess.run(["git", "commit", "-m", f"Aggiunti/aggiornati viaggi per {ISO_CODE.upper()}"] , check=True)
+        subprocess.run(["git", "push"], check=True)
+        print("🚀 Tutti i viaggi pushati su GitHub!")
+    except subprocess.CalledProcessError as e:
+        print("⚠️ Errore durante il push Git:", e)
+
+    for f in generated_files:
         try:
-            subprocess.run(["git", "add", "docs/"], check=True)
-            subprocess.run(["git", "commit", "-m", f"Aggiunto/aggiornato viaggio {title}"], check=True)
-            subprocess.run(["git", "push"], check=True)
-            print("🚀 Modifiche pubblicate su GitHub!")
-        except subprocess.CalledProcessError as e:
-            print("⚠️ Errore durante il push Git:", e)
+            os.remove(f)
+            print(f"🧹 Rimosso localmente: {f}")
+        except Exception as e:
+            print(f"⚠️ Errore rimozione {f}: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
