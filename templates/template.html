@@ -32,5 +32,40 @@
     <p>{{ meeting_info }}</p>
   </section>
 
+  <section>
+    <h2>Itinerario giorno per giorno</h2>
+    <div>
+      {{ day_by_day | safe }}
+    </div>
+  </section>
+
+  <section>
+    <h2>Cosa è incluso</h2>
+    <div>
+      {{ included | safe }}
+    </div>
+  </section>
+
+  <section>
+    <h2>La quota viaggio non comprende</h2>
+    <div>
+      {{ not_included | safe }}
+    </div>
+  </section>
+
+  <section>
+    <h2>La quota della cassa comune comprende</h2>
+    <div>
+      {{ cassa_comune | safe }}
+    </div>
+  </section>
+
+  <section>
+    <h2>Info aggiuntive</h2>
+    <div>
+      {{ extras | safe }}
+    </div>
+  </section>
+
 </body>
 </html>
