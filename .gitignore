@@ -26,3 +26,4 @@ config.json
 # 🔍 File generati per test locali
 *.html
 !docs/**/*.html  # MA: include solo HTML dentro docs/
+!docs/index.html
